@@ -188,3 +188,66 @@ class MedicationScheduler:
             
         except Exception as e:
             logger.error(f"Failed to log medication: {str(e)}")
+            raise
+    
+    def _determine_frequency(self, medication_info: Any) -> MedicationFrequency:
+        """Determine medication frequency from prescription"""
+        # Implementation would parse medication info to determine frequency
+        return MedicationFrequency.ONCE_DAILY
+    
+    def _determine_duration(self, medication_info: Any) -> int:
+        """Determine medication duration in days"""
+        # Default to 7 days if not specified
+        return getattr(medication_info, 'duration_days', 7)
+    
+    def _calculate_reminder_times(self, frequency: MedicationFrequency) -> List[str]:
+        """
+        Calculate reminder times based on frequency
+        Returns list of times in HH:MM format
+        """
+        times_map = {
+            MedicationFrequency.ONCE_DAILY: ["08:00"],
+            MedicationFrequency.TWICE_DAILY: ["08:00", "20:00"],
+            MedicationFrequency.THREE_TIMES_DAILY: ["08:00", "14:00", "20:00"],
+            MedicationFrequency.FOUR_TIMES_DAILY: ["08:00", "12:00", "16:00", "20:00"],
+            MedicationFrequency.AS_NEEDED: []
+        }
+        return times_map.get(frequency, ["08:00"])
+    
+    async def _schedule_reminders(self, schedule: MedicationSchedule):
+        """
+        Schedule reminders for medication times
+        Uses APScheduler with cron triggers
+        """
+        for time_str in schedule.reminder_times:
+            hour, minute = map(int, time_str.split(':'))
+            
+            # Create cron trigger for daily reminder at specified time
+            trigger = CronTrigger(hour=hour, minute=minute)
+            
+            # Add job to scheduler
+            self.scheduler.add_job(
+                func=self._send_reminder,
+                trigger=trigger,
+                args=[schedule],
+                id=f"reminder_{schedule.id}_{time_str}",
+                replace_existing=True
+            )
+            
+            logger.debug(f"Scheduled reminder at {time_str} for schedule {schedule.id}")
+    
+    async def _send_reminder(self, schedule: MedicationSchedule):
+        """Send medication reminder notification"""
+        await self.notification_service.send_medication_reminder(
+            user_id=schedule.user_id,
+            medication_name=schedule.medication_id,
+            dosage="As prescribed",  # Would come from medication info
+            scheduled_time=datetime.now()
+        )
+    
+    async def _remove_reminders(self, schedule: MedicationSchedule):
+        """Remove all reminders for a schedule"""
+        for time_str in schedule.reminder_times:
+            job_id = f"reminder_{schedule.id}_{time_str}"
+            if self.scheduler.get_job(job_id):
+                self.scheduler.remove_job(job_id)
