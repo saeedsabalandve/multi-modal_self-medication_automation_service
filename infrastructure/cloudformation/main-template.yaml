@@ -1,0 +1,82 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Multi-Modal Self-Medication Automation - CloudFormation Template'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: production
+    AllowedValues: [development, staging, production]
+  
+  ApplicationName:
+    Type: String
+    Default: self-medication-automation
+
+Resources:
+  # S3 Bucket for Medication Images
+  MedicationStorageBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${ApplicationName}-storage-${AWS::AccountId}
+      VersioningConfiguration:
+        Status: Enabled
+      EncryptionConfiguration:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldImages
+            Status: Enabled
+            ExpirationInDays: 90
+
+  # DynamoDB Table for Medication Records
+  MedicationRecordsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub ${ApplicationName}-records
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: medication_id
+          AttributeType: S
+        - AttributeName: user_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: medication_id
+          KeyType: HASH
+        - AttributeName: user_id
+          KeyType: RANGE
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  # SNS Topic for Notifications
+  MedicationNotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub ${ApplicationName}-notifications
+      KmsMasterKeyId: alias/aws/sns
+
+  # Lambda Function for Image Processing
+  MedicationImageProcessor:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${ApplicationName}-image-processor
+      Runtime: python3.11
+      Handler: src.aws.lambda_functions.medication_image_processor
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: lambda/medication-processor.zip
+      Environment:
+        Variables:
+          SNS_TOPIC_ARN: !Ref MedicationNotificationTopic
+          ENVIRONMENT: !Ref Environment
+      Timeout: 30
+      MemorySize: 256
+
+Outputs:
+  S3BucketName:
+    Value: !Ref MedicationStorageBucket
+    Description: S3 Bucket for medication storage
+  
+  DynamoDBTableName:
+    Value: !Ref MedicationRecordsTable
+    Description: DynamoDB table for medication records
